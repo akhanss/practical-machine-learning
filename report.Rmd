@@ -1,0 +1,120 @@
+---
+title: "Practical Machine Learning Coursera Project"
+author: "Mohammad Azam Khan"
+date: "November 21, 2015"
+output: html_document
+---
+
+## Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to select and build an optimal prediction model.
+
+The participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har
+
+## Download the dataset
+```{r echo = TRUE}
+trainingDatasetFileUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+destFile <- "./pml-training.csv"
+if(!file.exists(destFile)){
+  download.file(trainingDatasetFileUrl, destFile, method = "curl")
+}
+
+testingDatasetFileUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+destFile <- "./pml-testing.csv"
+if(!file.exists(destFile)){
+  download.file(testingDatasetFileUrl, destFile, method = "curl")
+}
+```
+
+## Reading the data
+```{r echo = TRUE}
+datasetTraining <- read.csv("./pml-training.csv", header = TRUE)
+datasetTesting <- read.csv("./pml-testing.csv", header = TRUE)
+```
+
+## Structure of the Training dataset
+```{r echo = TRUE}
+str(datasetTraining)
+```
+There are 19622 observations with 160 variables each.  
+
+## Creating Tidy dataset
+The training dataset contains some invalid values such as NA's and blanks in some variables (say, var_total_accel_belt). It is better to eliminate such variables with large amount of invalid values be excluded from the model.
+
+```{r echo = TRUE}
+summary(datasetTraining$var_total_accel_belt)
+```
+
+After excluding the abovementioned variables, it is found that the data has no more invalid values as described by `complete.cases` command. We now have 54 variables, including the variable to be predicted, `classe`.
+
+```{r processdata, cache = TRUE, echo = TRUE}
+datasetTrainingTidy <- datasetTraining[, -c(grep("^amplitude|^kurtosis|^skewness|^avg|^cvtd_timestamp|^max|^min|^new_window|^raw_timestamp|^stddev|^var|^user_name|X", names(datasetTraining)))]
+
+paste("Complete Cases: ")
+table(complete.cases(datasetTrainingTidy))
+```
+
+## Splitting the dataset
+Given that we have a medium to large sample size, it is decided that the tidy data be further split into two sets, 60% for training and 40% for testing.
+
+```{r splitdata, cache = TRUE}
+library(caret)
+set.seed(39)
+inTrain <- createDataPartition(y = datasetTrainingTidy$classe, times = 1, p = 0.6, list = FALSE)
+dataTidyTrain <- datasetTrainingTidy[inTrain, ]
+dataTidyTest <- datasetTrainingTidy[-inTrain, ]
+```
+
+## Model Selection
+### Model Comparison
+1. It is determined that this is a classification problem and the aim of the comparison is to discover which algorithm suits the data better.   
+2. The RandomForest `rf` and Gradient Boosting `gbm` algorithms are selected for comparison based on the accuracy these algorithms can achieve in classification. In addition, these two models have built-in feature selection as described in the Caret package reference.  
+3. The Kappa metric is selected as the comparison criteria.   
+4. To reduce the risk of overfitting, a 10-fold cross validation is employed during model building.
+
+```{r comparemodel, cache = TRUE}
+library(randomForest)
+set.seed(39)
+# k-fold validation - 10-fold validation, use kappa as metric
+fitControl <- trainControl(method = "cv", number = 10)
+gbmFit <- train(classe~., data = dataTidyTrain, method = "gbm", metric = "Kappa", trControl = fitControl, verbose = FALSE)
+rfFit <- train(classe ~., data = dataTidyTrain, method = "rf", metric = "Kappa", trControl = fitControl)
+```
+
+### Model Plotting and selection
+1. The models are then compared using the `resamples` function from the Caret package.
+2. Based on the plot below, it can be determined that the RandomForest algorithm fares better than the Gradient Boosting algorithm for this dataset, achieving a Kappa mean value of 0.996. It can also be seen that the RandomForest algorithm also displays less spread than Gradient Boosting.
+3. Therefore, the RandomForest model is selected for this dataset. 
+
+```{r modelplot}
+library(caret)
+library(lattice)
+rValues <- resamples(list(rf = rfFit, gbm = gbmFit))
+summary(rValues)
+bwplot(rValues, metric = "Kappa", main = "RandomForest (rf) vs Gradient Boosting (gbm)")
+```
+
+## Model Validation
+1. With the selected RandomForest model, we shall proceed to model validation.  
+2. The details of the selected model is shown below.
+
+```{r selectedmodel}
+rfFit
+```
+
+3. We shall be using the `confusionMatrix` function in the Caret package to validate the selected model with the `dataTidyTest` test set. The corresponding statistics and error rates are shown.  
+
+```{r validatemodel}
+confusionMatrix(dataTidyTest$classe, predict(rfFit, dataTidyTest))
+```
+
+4. From the above validation result, it can be determined that the selected Model performs at a Kappa value of 0.995, with an accuracy of 0.996.
+
+## Final Model Testing
+Finally, we shall use the selected model to predict the classification of the testing set provided.
+
+```{r test}
+results <- predict(rfFit, newdata = datasetTesting)
+print(as.data.frame(results))
+```
